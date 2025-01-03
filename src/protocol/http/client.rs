@@ -1,115 +1,106 @@
 use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{Result, Context};
-use async_trait::async_trait;
-use reqwest::{Client as ReqwestClient, ClientBuilder};
-use serde::{de::DeserializeOwned, Serialize};
-use tracing::{debug, error, instrument};
-use crate::config::types::{BackendConfig, CircuitBreakerConfig, RetryConfig};
-use tokio::time::sleep;
-use super::HttpHandler;
+use reqwest::{Client, ClientBuilder};
 use serde_json::Value;
+use tracing::{info, error, instrument};
+use crate::config::types::{BackendConfig, CircuitBreakerConfig, RetryConfig};
+use async_trait::async_trait;
+use super::HttpHandler;
 
 #[derive(Debug, Clone)]
+struct BackendInfo {
+    method: String,
+    url: String,
+}
+
+#[derive(Debug)]
 pub struct HttpClient {
-    client: ReqwestClient,
-    config: BackendConfig,
-}
-
-#[async_trait]
-pub trait HttpBackend: Send + Sync + 'static {
-    async fn send_request<T, R>(&self, payload: &T) -> Result<R>
-    where
-        T: Serialize + Send + Sync,
-        R: DeserializeOwned + Send;
-}
-
-#[async_trait]
-impl HttpHandler for HttpClient {
-    async fn handle(&self, request: Value) -> Result<Value> {
-        self.send_request(&request).await
-    }
+    client: Client,
+    backends: Vec<BackendConfig>,
+    current_backend: usize,
 }
 
 impl HttpClient {
-    pub fn new(config: BackendConfig) -> Result<Self> {
+    pub fn new(backends: Vec<BackendConfig>) -> Result<Self> {
         let mut builder = ClientBuilder::new()
-            .timeout(config.timeout.unwrap_or_else(|| Duration::from_secs(30)))
-            .pool_idle_timeout(Some(Duration::from_secs(30)))
-            .pool_max_idle_per_host(32);
+            .timeout(std::time::Duration::from_secs(30));
+            
+        if let Some(retry) = backends.first().and_then(|b| b.retry.as_ref()) {
+            builder = configure_retry(builder, retry);
+        }
 
-        let client = builder.build().context("Failed to build HTTP client")?;
+        let client = builder.build()?;
 
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            backends,
+            current_backend: 0,
+        })
     }
 
-    #[instrument(skip(self, payload), fields(url = %self.config.url))]
-    async fn execute_with_retry<T, R>(&self, payload: &T) -> Result<R>
-    where
-        T: Serialize + Send + Sync,
-        R: DeserializeOwned,
-    {
-        let retry_config = self.config.retry.clone().unwrap_or_else(|| RetryConfig {
-            attempts: 3,
-            backoff: Duration::from_millis(100),
-        });
-
-        let mut attempt = 0;
+    #[instrument(skip(self, payload))]
+    async fn make_request(&mut self, payload: Value) -> Result<Value> {
         let mut last_error = None;
+        let client = self.client.clone();
+        let backends = self.backends.clone();
+        let total_backends = backends.len();
+        let start_backend = self.current_backend;
+        self.current_backend = (start_backend + 1) % total_backends;
 
-        while attempt < retry_config.attempts {
-            match self.execute_request(payload).await {
-                Ok(response) => return Ok(response),
-                Err(e) => {
-                    error!(error = ?e, attempt = attempt, "Request failed");
-                    last_error = Some(e);
-                    attempt += 1;
-                    if attempt < retry_config.attempts {
-                        sleep(retry_config.backoff).await;
+        for i in 0..total_backends {
+            let backend_idx = (start_backend + i) % total_backends;
+            let backend = &backends[backend_idx];
+            let method = backend.method.as_ref().unwrap_or(&"GET".to_string()).to_string();
+            
+            info!(backend_url = %backend.url, "Attempting request to backend");
+            
+            let mut request = client
+                .request(
+                    reqwest::Method::from_bytes(method.as_bytes())?,
+                    &backend.url
+                );
+
+            // Only add JSON body for non-GET requests
+            if method != "GET" {
+                request = request.json(&payload);
+            }
+            
+            match request
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        return response.json().await.context("Failed to parse backend response");
                     }
+                    last_error = Some(anyhow::anyhow!("Backend returned status: {}", response.status()));
+                }
+                Err(e) => {
+                    error!(error = ?e, "Backend request failed");
+                    last_error = Some(e.into());
                 }
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All retry attempts failed")))
-    }
-
-    async fn execute_request<T, R>(&self, payload: &T) -> Result<R>
-    where
-        T: Serialize + Send + Sync,
-        R: DeserializeOwned,
-    {
-        let method = self.config.method.as_deref().unwrap_or("POST");
-        let request = self.client
-            .request(method.parse()?, &self.config.url)
-            .json(payload)
-            .build()?;
-
-        debug!(url = %self.config.url, method = %method, "Sending request");
-        
-        let response = self.client
-            .execute(request)
-            .await
-            .context("Failed to execute request")?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Backend request failed with status: {}",
-                response.status()
-            ));
-        }
-
-        response.json().await.context("Failed to deserialize response")
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All backends failed")))
     }
 }
 
 #[async_trait]
-impl HttpBackend for HttpClient {
-    async fn send_request<T, R>(&self, payload: &T) -> Result<R>
-    where
-        T: Serialize + Send + Sync,
-        R: DeserializeOwned + Send,
-    {
-        self.execute_with_retry(payload).await
+impl HttpHandler for HttpClient {
+    async fn handle(&self, payload: Value) -> Result<Value> {
+        // Clone self to allow mutation of current_backend
+        let mut client = Self {
+            client: self.client.clone(),
+            backends: self.backends.clone(),
+            current_backend: self.current_backend,
+        };
+        
+        client.make_request(payload).await
     }
+}
+
+fn configure_retry(builder: ClientBuilder, config: &RetryConfig) -> ClientBuilder {
+    // Implement retry configuration
+    builder
 } 

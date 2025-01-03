@@ -120,7 +120,7 @@ impl Gateway {
         // Configure HTTP routes from config
         for endpoint in &self.config.endpoints {
             for backend in &endpoint.backend {
-                let client = crate::protocol::http::HttpClient::new(backend.clone())?;
+                let client = crate::protocol::http::HttpClient::new(vec![backend.clone()])?;
                 http.router().add_route(&endpoint.path, endpoint.clone(), client)?;
             }
         }

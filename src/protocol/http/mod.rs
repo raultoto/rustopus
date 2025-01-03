@@ -3,7 +3,7 @@ mod router;
 pub mod middleware;
 mod server;
 
-pub use client::{HttpClient, HttpBackend};
+pub use client::{HttpClient};
 pub use router::HttpRouter;
 pub use middleware::{Middleware, MiddlewareChain};
 pub use server::HttpServer;

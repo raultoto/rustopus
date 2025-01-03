@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     routing::{get, post, put, delete},
-    extract::{State, Path, Json},
+    extract::{State, Json, OriginalUri},
     response::IntoResponse,
     http::StatusCode,
     body::Body,
@@ -38,13 +38,22 @@ impl HttpServer {
             protocol: self.protocol.clone(),
         };
 
-        let app = Router::new()
-            .route("/health", get(health_check))
-            .route("/*path", get(handle_request))
-            .route("/*path", post(handle_request))
-            .route("/*path", put(handle_request))
-            .route("/*path", delete(handle_request))
-            .with_state(state);
+        let mut app = Router::new()
+            .route("/health", get(health_check));
+
+        // Add configured routes based on their methods
+        for endpoint in &self.config.endpoints {
+            let path = endpoint.path.clone();
+            match endpoint.method.to_uppercase().as_str() {
+                "GET" => app = app.route(&path, get(handle_request)),
+                "POST" => app = app.route(&path, post(handle_request)),
+                "PUT" => app = app.route(&path, put(handle_request)),
+                "DELETE" => app = app.route(&path, delete(handle_request)),
+                _ => continue,
+            };
+        }
+
+        let app = app.with_state(state);
 
         info!("Starting HTTP server on {}", addr);
         axum::serve(
@@ -64,14 +73,14 @@ async fn health_check() -> impl IntoResponse {
 
 async fn handle_request(
     State(state): State<ServerState>,
-    Path(path): Path<String>,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, StatusCode>
-{
+    OriginalUri(uri): OriginalUri,
+    payload: Option<Json<Value>>,
+) -> Result<Json<Value>, StatusCode> {
     let protocol_guard = state.protocol.read().await;
+    let path = uri.path();
     let (route, params) = protocol_guard
         .router_ref()
-        .match_route(&path)
+        .match_route(path)
         .ok_or(StatusCode::NOT_FOUND)?;
     let route = route.clone();
     let middlewares: Vec<_> = protocol_guard.middleware().iter().collect();
@@ -82,8 +91,9 @@ async fn handle_request(
     }
     
     // Pre-process
+    let payload_value = payload.map(|p| p.0).unwrap_or(Value::Null);
     for middleware in &middlewares {
-        if let Err(e) = middleware.pre_process(&payload, &mut context).await {
+        if let Err(e) = middleware.pre_process(&payload_value, &mut context).await {
             error!(?e, "Middleware pre-processing failed");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -92,7 +102,7 @@ async fn handle_request(
     // Execute handler
     let response = route
         .handler
-        .handle(payload)
+        .handle(payload_value)
         .await
         .map_err(|e| {
             error!(?e, "Request handler failed");

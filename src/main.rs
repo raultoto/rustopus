@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
         config.clone(),
     )?;
 
-    let http = HttpServer::new(
+    let http: HttpServer = HttpServer::new(
         Arc::new(RwLock::new(HttpProtocol::new())),
         Arc::new(config),
     );

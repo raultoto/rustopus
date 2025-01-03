@@ -45,8 +45,11 @@ impl HttpRouter {
 
     #[instrument(skip(self))]
     pub fn match_route(&self, path: &str) -> Option<(&Route, HashMap<String, String>)> {
+        // Normalize path
+        let normalized_path = normalize_path(path);
+        
         for route in self.routes.values() {
-            if let Some(captures) = route.pattern.captures(path) {
+            if let Some(captures) = route.pattern.captures(&normalized_path) {
                 let mut params = HashMap::new();
                 for name in route.pattern.capture_names().flatten() {
                     if let Some(value) = captures.name(name) {
@@ -61,6 +64,18 @@ impl HttpRouter {
 
     pub fn routes(&self) -> &HashMap<String, Route> {
         &self.routes
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    // Remove trailing slash if present
+    let path = path.trim_end_matches('/');
+    
+    // Handle API versioning
+    if path.starts_with("/api/v1/") {
+        path.replace("/api/v1/", "/api/")
+    } else {
+        path.to_string()
     }
 }
 
@@ -80,7 +95,10 @@ fn path_to_regex(path: &str) -> Result<Regex> {
         }
     }
 
-    pattern.push('$');
+    if !pattern.ends_with('$') {
+        pattern.push_str("/?$");  // Make trailing slash optional
+    }
+
     Regex::new(&pattern).context("Failed to compile route pattern")
 }
 
@@ -90,12 +108,20 @@ mod tests {
     use crate::config::types::{BackendConfig, BackendProtocol};
 
     #[test]
+    fn test_path_normalization() {
+        assert_eq!(normalize_path("/api/v1/users"), "/api/users");
+        assert_eq!(normalize_path("/api/v1/users/"), "/api/users");
+        assert_eq!(normalize_path("/api/users"), "/api/users");
+        assert_eq!(normalize_path("/health"), "/health");
+    }
+
+    #[test]
     fn test_path_to_regex() {
         let cases = vec![
-            ("/users", "^/users$"),
-            ("/users/:id", "^/users/(?P<id>\\w+)$"),
-            ("/users/:id/posts", "^/users/(?P<id>\\w+)/posts$"),
-            ("/users/*", "^/users/.*$"),
+            ("/users", "^/users/?$"),
+            ("/users/:id", "^/users/(?P<id>\\w+)/?$"),
+            ("/users/:id/posts", "^/users/(?P<id>\\w+)/posts/?$"),
+            ("/users/*", "^/users/.*/?$"),
         ];
 
         for (path, expected) in cases {
@@ -108,10 +134,10 @@ mod tests {
     fn test_route_matching() {
         let mut router = HttpRouter::new();
         let config = EndpointConfig {
-            path: "/users/:id".to_string(),
+            path: "/api/users/:id".to_string(),
             method: "GET".to_string(),
             backend: vec![BackendConfig {
-                url: "http://backend/users".to_string(),
+                url: "http://users-service:8080/users".to_string(),
                 method: Some("GET".to_string()),
                 timeout: None,
                 circuit_breaker: None,
@@ -126,9 +152,14 @@ mod tests {
             guards: vec![],
         };
 
-        router.add_route("/users/:id", config.clone(), HttpClient::new(config.backend[0].clone()).unwrap()).unwrap();
+        router.add_route("/api/users/:id", config.clone(), HttpClient::new(vec![config.backend[0].clone()]).unwrap()).unwrap();
 
-        let (_, params) = router.match_route("/users/123").unwrap();
+        // Test v1 path
+        let (_, params) = router.match_route("/api/v1/users/123").unwrap();
         assert_eq!(params.get("id").unwrap(), "123");
+
+        // Test direct path
+        let (_, params) = router.match_route("/api/users/456").unwrap();
+        assert_eq!(params.get("id").unwrap(), "456");
     }
 } 
