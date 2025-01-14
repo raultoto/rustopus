@@ -42,6 +42,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
                 .with_context(|| format!("Failed to parse YAML config from {}", path.display()))
         }
         Some(ext) => {
+            info!("Unsupported config file format: .{}", ext);
             Err(anyhow::anyhow!("Unsupported config file format: .{}", ext))
         }
         None => {
