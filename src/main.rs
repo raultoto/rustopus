@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     );
     
     // Start the gateway
-    info!("Starting HTTP gateway...");
+    info!("Starting  Rustopus HTTP gateway...");
     http.start().await?;
 
     Ok(())
