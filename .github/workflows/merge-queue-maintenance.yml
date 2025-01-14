@@ -1,0 +1,59 @@
+name: Merge Queue Maintenance
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - develop
+
+jobs:
+  maintain-merge-queue:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Get merged branch name
+        id: merged-branch
+        run: |
+          MERGED_BRANCH="${{ github.event.pull_request.head.ref }}"
+          echo "MERGED_BRANCH=${MERGED_BRANCH}" >> $GITHUB_ENV
+
+      - name: Save branches from merge-queue-to-dev
+        id: save-branches
+        run: |
+          # Get all branches merged into merge-queue-to-dev except the one that was just merged to develop
+          MERGED_BRANCHES=$(git branch -r --merged origin/merge-queue-to-dev | grep -v "merge-queue-to-dev" | grep -v "${{ env.MERGED_BRANCH }}" | sed 's/origin\///')
+          echo "MERGED_BRANCHES<<EOF" >> $GITHUB_ENV
+          echo "$MERGED_BRANCHES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Delete and recreate merge-queue-to-dev
+        run: |
+          git push origin --delete merge-queue-to-dev || true
+          git checkout develop
+          git pull origin develop
+          git checkout -b merge-queue-to-dev
+          git push origin merge-queue-to-dev
+
+      - name: Merge saved branches
+        run: |
+          git checkout merge-queue-to-dev
+          while IFS= read -r branch; do
+            if [ ! -z "$branch" ]; then
+              branch=$(echo "$branch" | xargs)  # Trim whitespace
+              echo "Merging $branch into merge-queue-to-dev"
+              git fetch origin $branch
+              git merge --no-ff origin/$branch -m "chore: re-merging $branch into merge-queue-to-dev"
+            fi
+          done <<< "${{ env.MERGED_BRANCHES }}"
+          git push origin merge-queue-to-dev 
