@@ -79,7 +79,12 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          args: "❌ **Merge Conflict Detected!**\nConflict occurred while trying to merge branch `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`.\nPlease resolve the conflicts manually."
+          args: |
+            :x: **Merge Conflict Alert**
+            > :warning: Conflict detected while merging branch
+            > `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`
+            
+            Please resolve the conflicts manually.
 
       - name: Send Discord notification on successful merge
         if: steps.merge_step.outcome == 'success'
@@ -87,4 +92,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          args: "✅ **Successful Merge to merge-queue-to-dev**\nThe following branches were merged successfully:${{ steps.merge_step.outputs.merged_branches }}" 
+          args: |
+            :white_check_mark: **Successful Merge to merge-queue-to-dev**
+            > :rocket: The following branches were merged successfully:
+            ${{ steps.merge_step.outputs.merged_branches }} 
