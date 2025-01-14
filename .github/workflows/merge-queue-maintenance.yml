@@ -50,14 +50,41 @@ jobs:
           git push origin merge-queue-to-dev
 
       - name: Merge saved branches
+        id: merge_step
+        continue-on-error: true
         run: |
           git checkout merge-queue-to-dev
+          merged_branches=""
           while IFS= read -r branch; do
             if [ ! -z "$branch" ]; then
               branch=$(echo "$branch" | xargs)  # Trim whitespace
               echo "Merging $branch into merge-queue-to-dev"
-              git fetch origin $branch
-              git merge --no-ff origin/$branch -m "chore: re-merging $branch into merge-queue-to-dev"
+              if git fetch origin $branch && git merge --no-ff origin/$branch -m "chore: re-merging $branch into merge-queue-to-dev"; then
+                merged_branches="$merged_branches\n- $branch"
+              else
+                echo "::set-output name=merge_failed::true"
+                echo "::set-output name=failed_branch::$branch"
+                exit 1
+              fi
             fi
           done <<< "${{ env.MERGED_BRANCHES }}"
-          git push origin merge-queue-to-dev 
+          echo "::set-output name=merged_branches::$merged_branches"
+          if [ $? -eq 0 ]; then
+            git push origin merge-queue-to-dev
+          fi
+
+      - name: Send Discord notification on merge conflict
+        if: steps.merge_step.outcome == 'failure'
+        uses: Ilshidur/action-discord@master
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          args: "❌ **Merge Conflict Detected!**\nConflict occurred while trying to merge branch `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`.\nPlease resolve the conflicts manually."
+
+      - name: Send Discord notification on successful merge
+        if: steps.merge_step.outcome == 'success'
+        uses: Ilshidur/action-discord@master
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          args: "✅ **Successful Merge to merge-queue-to-dev**\nThe following branches were merged successfully:${{ steps.merge_step.outputs.merged_branches }}" 
