@@ -4,6 +4,7 @@ use tracing::{info, warn};
 use super::Config;
 
 pub fn load_config(path: &Path) -> Result<Config> {
+    info!("Loading configuration...");
     if !path.exists() {
         info!("No config file found at {}, using default configuration", path.display());
         return Ok(Config::default());
