@@ -60,15 +60,14 @@ jobs:
               branch=$(echo "$branch" | xargs)  # Trim whitespace
               echo "Merging $branch into merge-queue-to-dev"
               if git fetch origin $branch && git merge --no-ff origin/$branch -m "chore: re-merging $branch into merge-queue-to-dev"; then
-                merged_branches="$merged_branches\n- $branch"
+                merged_branches="${merged_branches}- ${branch}\n"
               else
-                echo "::set-output name=merge_failed::true"
-                echo "::set-output name=failed_branch::$branch"
+                echo "failed_branch=${branch}" >> $GITHUB_OUTPUT
                 exit 1
               fi
             fi
           done <<< "${{ env.MERGED_BRANCHES }}"
-          echo "::set-output name=merged_branches::$merged_branches"
+          echo "merged_branches=${merged_branches}" >> $GITHUB_OUTPUT
           if [ $? -eq 0 ]; then
             git push origin merge-queue-to-dev
           fi
@@ -79,16 +78,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          args: |
-            :x: **Merge Conflict Alert**
-            :warning: Conflict detected while merging branch `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`
-            
-            **Branches being merged:**
-            ```
-            ${{ env.MERGED_BRANCHES }}
-            ```
-            
-            Please resolve the conflicts manually.
+          args: ":x: **Merge Conflict Alert**\n:warning: Conflict detected while merging branch `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`\n\n**Branches being merged:**\n\`\`\`\n${{ env.MERGED_BRANCHES }}\`\`\`\n\nPlease resolve the conflicts manually."
 
       - name: Send Discord notification on successful merge
         if: steps.merge_step.outcome == 'success'
@@ -96,9 +86,4 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          args: |
-            :white_check_mark: **Successful Merge to merge-queue-to-dev**
-            :rocket: The following branches were merged successfully:
-            ```
-            ${{ steps.merge_step.outputs.merged_branches }}
-            ``` 
+          args: ":white_check_mark: **Successful Merge to merge-queue-to-dev**\n:rocket: The following branches were merged successfully:\n\`\`\`\n${{ steps.merge_step.outputs.merged_branches }}\`\`\`" 
