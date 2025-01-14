@@ -8,6 +8,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
     info!("Path: {}", path.display());
     if !path.exists() {
         info!("No config file found at {}, using default configuration", path.display());
+        info!("Exists: {}", path.exists());
         return Ok(Config::default());
     }
 
