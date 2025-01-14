@@ -16,7 +16,8 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting RustOpus API Gateway...");
-
+    
+    info!("Loading configuration...");
     // Load configuration
     let config = Config::load()?;
     
