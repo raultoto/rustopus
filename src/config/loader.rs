@@ -14,6 +14,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
     }
 
     if path.is_dir() {
+        info!("Path is a directory");
         return Err(anyhow::anyhow!("Config path {} is a directory, expected a file", path.display()));
     }
 
