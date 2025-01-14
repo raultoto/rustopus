@@ -5,6 +5,7 @@ use super::Config;
 
 pub fn load_config(path: &Path) -> Result<Config> {
     info!("Loading configuration...");
+    info!("Path: {}", path.display());
     if !path.exists() {
         info!("No config file found at {}, using default configuration", path.display());
         return Ok(Config::default());
