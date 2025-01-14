@@ -45,7 +45,6 @@ async fn main() -> Result<()> {
     );
     
     // Start the gateway
-    info!("Starting RustOpus HTTP gateway...");
     http.start().await?;
 
     Ok(())
