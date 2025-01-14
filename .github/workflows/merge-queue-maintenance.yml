@@ -74,30 +74,46 @@ jobs:
 
       - name: Send Discord notification on merge conflict
         if: steps.merge_step.outcome == 'failure'
-        uses: Ilshidur/action-discord@master
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        with:
-          args: |
-            :x: **Merge Conflict Alert**
-            :warning: Conflict detected while merging branch `${{ steps.merge_step.outputs.failed_branch }}` into `merge-queue-to-dev`
-
-            **Branches being merged:**
-            ```
-            ${{ env.MERGED_BRANCHES }}
-            ```
-
-            Please resolve the conflicts manually.
+        run: |
+          curl -H "Content-Type: application/json" \
+            -X POST \
+            -d '{
+              "content": ":x: **Merge Conflict Alert**",
+              "embeds": [
+                {
+                  "title": "Conflict Details",
+                  "description": ":warning: Conflict detected while merging branch `'"${{ steps.merge_step.outputs.failed_branch }}"'` into `merge-queue-to-dev`",
+                  "color": 15158332,
+                  "fields": [
+                    {
+                      "name": "Branches being merged",
+                      "value": "```\n'"${{ env.MERGED_BRANCHES }}"'\n```"
+                    }
+                  ]
+                }
+              ]
+            }' \
+            ${{ secrets.DISCORD_WEBHOOK }}
 
       - name: Send Discord notification on successful merge
         if: steps.merge_step.outcome == 'success'
-        uses: Ilshidur/action-discord@master
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        with:
-          args: |
-            :white_check_mark: **Successful Merge to merge-queue-to-dev**
-            :rocket: The following branches were merged successfully:
-            ```
-            ${{ steps.merge_step.outputs.merged_branches }}
-            ``` 
+        run: |
+          curl -H "Content-Type: application/json" \
+            -X POST \
+            -d '{
+              "content": ":white_check_mark: **Successful Merge to merge-queue-to-dev**",
+              "embeds": [
+                {
+                  "title": "Merged Branches",
+                  "description": ":rocket: The following branches were merged successfully:",
+                  "color": 5814783,
+                  "fields": [
+                    {
+                      "name": "Branches",
+                      "value": "```\n'"${{ steps.merge_step.outputs.merged_branches }}"'\n```"
+                    }
+                  ]
+                }
+              ]
+            }' \
+            ${{ secrets.DISCORD_WEBHOOK }} 
